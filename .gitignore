@@ -1,4 +1,215 @@
-.Rproj.user
-.Rhistory
-.RData
-.Ruserdata
+PLOS_data_last <- read.csv("D:/Anomaly Detection/Final Project/PLOS_data_last.csv")
+# Select the 5th column
+fifth_column <- PLOS_data_last$Close
+data1<-fifth_column[1:500]
+
+# Plot the reconstructed_vector with a thin colorful line
+plot(data1, type = "l", col = "darkorange", lwd = 2,
+     main = "subset_data", xlab = "Index", ylab = "Value")
+length(data1)
+# Function to create a Hankel matrix
+create_hankel <- function(data, num_rows, num_cols) {
+  # Check if there is enough data to fill the Hankel matrix
+  if (length(data) < num_rows + num_cols - 1) {
+    stop("Not enough data points to construct the Hankel matrix with the given dimensions.")
+  }
+  
+  # Initialize an empty Hankel matrix
+  hankel_matrix <- matrix(nrow = num_rows, ncol = num_cols)
+  
+  # Fill each row with a time-shifted sequence
+  for (i in 1:num_rows) {
+    hankel_matrix[i, ] <- data[i:(i + num_cols - 1)]
+  }
+  
+  return(hankel_matrix)
+}
+
+# Define dimensions for the Hankel matrix
+num_rows <- 250  # Number of rows
+num_cols <- 10   # Number of columns
+
+# Ensure `data1` has enough length for the specified dimensions
+if (length(data1) < num_rows + num_cols - 1) {
+  stop("The length of `data1` is insufficient to create the Hankel matrix with the given dimensions.")
+}
+
+# Create the Hankel matrix
+hankel_matrix <- create_hankel(data1, num_rows, num_cols)
+
+standardized_data1 <- scale(hankel_matrix)
+length(standardized_data1)
+
+# Convert the standardized data matrix to a vector
+standardized_vector <- as.vector(standardized_data1)
+
+# Calculate the covariance matrix
+covmat <- cov(standardized_data1)
+# Perform Eigen decomposition of the covariance matrix
+eigen_decomp <- eigen(covmat)
+
+# Extract eigenvalues and eigenvectors
+eigenvalues <- eigen_decomp$values
+eigenvectors <- eigen_decomp$vectors
+
+# Print eigenvalues and eigenvectors
+print("Eigenvalues:")
+print(eigenvalues)
+print("Eigenvectors:")
+print(eigenvectors)
+
+
+# Calculate the principal components (Z matrix)
+principal_components <- standardized_data1 %*% eigenvectors
+summary(principal_components)
+PC<-prcomp(standardized_data1)
+summary(PC)
+install.packages("factoextra")
+library(factoextra)
+fviz_eig(PC)
+# Print the first two principal components
+z1 <- principal_components[, 1]
+z2 <- principal_components[, 2]
+
+# Variance explained by each component
+variance_explained <- eigenvalues / sum(eigenvalues)
+
+# Cumulative variance explained
+cumulative_variance <- cumsum(variance_explained)
+
+# Print the variance explained
+print("Variance Explained by Each Component:")
+print(variance_explained)
+print("Cumulative Variance Explained:")
+print(cumulative_variance)
+
+# Determine the number of components to retain 90% of variance
+num_components <- which(cumulative_variance >= 0.9)[1]
+print(paste("Number of components to retain 90% variance:", num_components))
+
+# Reconstruct data using top components
+reconstructed_mat <- principal_components[, 1:num_components] %*% t(eigenvectors[, 1:num_components])
+# Add back the mean and rescale to original prices
+# Get the original means used for standardization
+means <- attr(standardized_data1, "scaled:center")
+# Add back the mean vector to reconstruct the data
+recon_data <- sweep(reconstructed_mat, 2, means, "+")
+# Function to de-Hankelize a matrix and reconstruct the original data
+de_hankelize <- function(hankel_matrix) {
+  num_rows <- nrow(hankel_matrix)
+  num_cols <- ncol(hankel_matrix)
+  
+  # Length of the original data
+  original_length <- num_rows + num_cols - 1
+  
+  # Initialize an empty vector for reconstructed data
+  reconstructed_data <- numeric(original_length)
+  
+  # Initialize a count vector to track overlaps
+  count <- numeric(original_length)
+  
+  # Iterate over each element in the Hankel matrix
+  for (i in 1:num_rows) {
+    for (j in 1:num_cols) {
+      index <- i + j - 1  # Compute the corresponding index in the original data
+      reconstructed_data[index] <- reconstructed_data[index] + hankel_matrix[i, j]
+      count[index] <- count[index] + 1
+    }
+  }
+  
+  # Divide by the count to average overlapping elements
+  reconstructed_data <- reconstructed_data / count
+  
+  return(reconstructed_data)
+}
+
+# De-Hankelize the reconstructed matrix
+final_reconstructed_data <- de_hankelize(recon_data)
+length(final_reconstructed_data)
+plot(final_reconstructed_data)
+# Plot the original data and reconstructed data for comparison
+plot(data1, type = "l", col = "blue", lwd = 2, 
+     main = "Original vs Reconstructed Data", xlab = "Index", ylab = "Value")
+lines(final_reconstructed_data, col = "red", lwd = 2)
+legend("topright", legend = c("Original", "Reconstructed"), col = c("blue", "red"), lwd = 2)
+
+
+###############time series analysis#########
+
+# Create a time series object
+reconstructed_ts <- ts(data=recon_data,frequency=12,start=c(1962,1))
+plot(reconstructed_ts)
+# Convert the reconstructed data into a time series object
+reconstructed_ts <- ts(data = final_reconstructed_data, frequency = 12, start = c(1962, 1))
+
+# Plot the time series with a colorful line
+plot.ts(reconstructed_ts, col = "darkorange", lwd = 2, 
+        main = "Reconstructed Time Series (1962)", 
+        xlab = "Year", ylab = "Value")
+
+# Plot the time series to verify
+plot(reconstructed_ts, main = "Reconstructed Time Series", xlab = "Year", ylab = "Value")
+boxplot(reconstructed_ts~cycle(reconstructed_ts))
+###Detection of trend and get a stationary time series 
+install.packages("fpp")
+install.packages("forecast")
+library(fpp)
+library(forecast)
+plot(diff(reconstructed_ts))
+plot(diff(diff(reconstructed_ts)))
+     
+##craete a moving average that will be close to trend
+
+stock.trend<-ma(reconstructed_ts, order=4,centre = T)
+##plot trend and moving average together
+plot(as.ts(reconstructed_ts))
+lines(stock.trend)
+###Remove the trend
+stock.detrend=reconstructed_ts-stock.trend
+plot(as.ts(stock.detrend))
+##modelling ARIMA(p,d,q)
+install.packages("tseries")
+library(tseries)
+
+##selecting the vale of q
+acf(diff(diff(reconstructed_ts)))
+##selecting the value of p
+pacf(diff(diff(reconstructed_ts)))
+#Fit an ARIMA(0,2,1)
+myfit<-arima(reconstructed_ts,order = c(0,2,1),seasonal=list(order=c(0,2,1),period=12))
+myfit
+help("arima")
+#########Forecast for next 10 yrs
+pred<-predict(myfit,n.ahead=10*12)
+finalpred<-pred$pred
+ts.plot(reconstructed_ts, finalpred, lty = c(1, 3),col=c("blue", "red"),main = "Reconstructed vs Predicted Time Series")
+
+# Plot the time series with specified line types, colors, and line widths
+ts.plot(reconstructed_ts, finalpred, 
+        lty = c(1, 3),                # Line types for the series
+        col = c("blue", "red"),       # Colors for the series
+        lwd = 2,                      # Line width (thicker lines)
+        main = "Reconstructed vs Predicted Time Series", # Title
+        xlab = "Time",                # X-axis label
+        ylab = "Value")               # Y-axis label
+
+# Add a legend to differentiate the series
+legend("topleft", 
+       legend = c("Reconstructed Stock Price", "Predicted Stock Price"), 
+       col = c("blue", "red"), 
+       lty = c(1, 3), 
+       lwd = 2,                      # Match the legend line width to the plot
+       bty = "n",                    # Remove the box around the legend
+       cex = 0.8)                    # Scale the size of the legend (smaller)
+
+
+
+#checking the accuaracy of the prediction
+train_data<-ts(reconstructed_ts,frequency = 12,start = c(1962,1),end = 1982,12)
+myfit2<-arima(train_data,order = c(0,2,1),seasonal=list(order=c(0,2,1),period=12))
+pred2<-predict(myfit2,n.ahead=1*12)
+finalpred2<-pred2$pred
+true_1979<-tail(reconstructed_ts,12)
+# Assuming reconstructed_ts is a time series object with a monthly frequency
+true_1982 <- window(reconstructed_ts, start = c(1982, 2), end = c(1983, 1))
+data.frame(finalpred2,true_1982)
